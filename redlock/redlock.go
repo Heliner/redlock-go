@@ -43,6 +43,9 @@ var (
 
 	// ErrAcquireLock means acquire lock failed after max retry time
 	ErrAcquireLock = errors.New("failed to require lock")
+
+	// ErrUnLock means unlock failed
+	ErrUnLock = errors.New("failed to unlock")
 )
 
 // RedLock holds the redis lock
@@ -253,14 +256,21 @@ func (r *RedLock) UnLock(ctx context.Context, resource string) error {
 	}
 	defer r.cache.Delete(resource)
 	var wg sync.WaitGroup
+	var success int32
 	for _, cli := range r.clients {
 		cli := cli
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			unlockInstance(ctx, cli, resource, elem.Val) //nolint:errcheck
+			ok, _ := unlockInstance(ctx, cli, resource, elem.Val)
+			if ok {
+				atomic.AddInt32(&success, 1)
+			}
 		}()
 	}
 	wg.Wait()
-	return nil
+	if int(success) < r.quorum {
+		return ErrUnLock
+	}
+	return err
 }
